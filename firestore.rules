@@ -1,0 +1,42 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isValidStatus(status) {
+      return status in ['menunggu_bayar', 'lunas', 'hadir', 'dibatalkan'];
+    }
+
+    // Koleksi event
+    match /event/{eventId} {
+      allow read: if true;
+      allow create: if request.resource.data.harga >= 0 
+                    && request.resource.data.kuota >= 1
+                    && request.resource.data.tiket_terjual == 0;
+      allow update: if request.resource.data.harga >= 0
+                    && request.resource.data.kuota >= request.resource.data.tiket_terjual
+                    && request.resource.data.tiket_terjual >= 0;
+      allow delete: if resource.data.tiket_terjual == 0;
+    }
+
+    // Koleksi pembeli
+    match /pembeli/{noWhatsapp} {
+      allow read: if true;
+      allow create: if request.resource.data.nama.size() >= 2
+                    && request.resource.data.noWhatsapp == noWhatsapp
+                    && request.resource.data.email.matches('.*@.*');
+      allow update: if request.resource.data.noWhatsapp == noWhatsapp;
+      allow delete: if true;
+    }
+
+    // Koleksi tiket
+    match /tiket/{tiketId} {
+      allow read: if true;
+      allow create: if request.resource.data.jumlah >= 1 
+                    && request.resource.data.jumlah <= 5
+                    && request.resource.data.status == 'menunggu_bayar';
+      allow update: if isValidStatus(request.resource.data.status);
+      allow delete: if false; // Riwayat tiket dipertahankan
+    }
+  }
+}
