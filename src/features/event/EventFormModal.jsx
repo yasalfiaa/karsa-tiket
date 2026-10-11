@@ -81,7 +81,7 @@ export default function EventFormModal({ isOpen, onClose, onSave, initialData })
       onClose={onClose}
       title={initialData ? 'Ubah Data Event' : 'Tambah Event Baru'}
     >
-      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px', paddingBottom: '8px' }}>
         {errors.submit && (
           <div style={{ padding: '10px 12px', backgroundColor: '#FEE2E2', color: '#991B1B', borderRadius: 'var(--radius-sm)', fontSize: '13px' }}>
             {errors.submit}
