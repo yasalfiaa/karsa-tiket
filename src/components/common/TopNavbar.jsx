@@ -1,30 +1,7 @@
-import React, { useState } from 'react';
-import { Ticket, Sparkles, Trash2 } from 'lucide-react';
-import { localDB } from '../../services/storageEngine';
-import { useToast } from '../../contexts/ToastContext';
+import React from 'react';
+import { Ticket } from 'lucide-react';
 
-export default function TopNavbar({ onDataChanged }) {
-  const { toastSuccess, toastInfo } = useToast();
-  const [loading, setLoading] = useState(false);
-
-  const handleSeed = () => {
-    setLoading(true);
-    localDB.seedData();
-    toastSuccess('Data sampel (2 Event, 3 Pembeli, 4 Tiket) berhasil dimuat!');
-    setLoading(false);
-    if (onDataChanged) onDataChanged();
-    else window.location.reload();
-  };
-
-  const handleReset = () => {
-    if (window.confirm('Reset dan bersihkan seluruh data lokal?')) {
-      localDB.clearData();
-      toastInfo('Seluruh data lokal telah dibersihkan.');
-      if (onDataChanged) onDataChanged();
-      else window.location.reload();
-    }
-  };
-
+export default function TopNavbar() {
   return (
     <header
       style={{
@@ -41,19 +18,18 @@ export default function TopNavbar({ onDataChanged }) {
         style={{
           maxWidth: '640px',
           margin: '0 auto',
-          padding: '10px 16px',
+          padding: '12px 16px',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: '10px'
+          justifyContent: 'space-between'
         }}
       >
-        {/* Brand */}
+        {/* Brand Logo & Name */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <div
             style={{
-              width: '34px',
-              height: '34px',
+              width: '36px',
+              height: '36px',
               borderRadius: 'var(--radius-md)',
               background: 'var(--gradient-brand)',
               display: 'flex',
@@ -62,12 +38,12 @@ export default function TopNavbar({ onDataChanged }) {
               boxShadow: 'var(--shadow-xs)'
             }}
           >
-            <Ticket size={18} color="#1E2538" />
+            <Ticket size={20} color="#1E2538" />
           </div>
           <div>
             <h1
               style={{
-                fontSize: '17px',
+                fontSize: '18px',
                 fontWeight: 800,
                 color: 'var(--color-text-main)',
                 letterSpacing: '-0.02em',
@@ -82,48 +58,19 @@ export default function TopNavbar({ onDataChanged }) {
           </div>
         </div>
 
-        {/* Quick Demo & Evaluation Tools */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <button
-            onClick={handleSeed}
-            disabled={loading}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '5px',
-              padding: '6px 10px',
-              borderRadius: 'var(--radius-md)',
-              background: 'var(--gradient-brand)',
-              color: 'var(--color-text-main)',
-              fontSize: '11px',
-              fontWeight: 700,
-              border: 'none',
-              cursor: 'pointer',
-              boxShadow: 'var(--shadow-xs)',
-              transition: 'transform 0.15s ease'
-            }}
-            title="Muat data sampel instan (Event, Pembeli, Tiket)"
-          >
-            <Sparkles size={13} />
-            <span>Isi Data Demo</span>
-          </button>
-
-          <button
-            onClick={handleReset}
-            style={{
-              padding: '6px 8px',
-              borderRadius: 'var(--radius-md)',
-              background: 'var(--color-border-subtle)',
-              color: 'var(--color-text-muted)',
-              fontSize: '11px',
-              border: 'none',
-              cursor: 'pointer'
-            }}
-            title="Bersihkan Data"
-          >
-            <Trash2 size={13} />
-          </button>
-        </div>
+        {/* Clean Bootcamp Tag */}
+        <span
+          style={{
+            fontSize: '11px',
+            fontWeight: 600,
+            padding: '4px 10px',
+            borderRadius: 'var(--radius-full)',
+            backgroundColor: 'var(--color-primary-light)',
+            color: 'var(--color-primary)'
+          }}
+        >
+          Sesi 3 Bootcamp
+        </span>
       </div>
     </header>
   );

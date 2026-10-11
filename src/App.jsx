@@ -9,32 +9,27 @@ import RekapView from './features/rekap/RekapView';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('event');
-  const [refreshKey, setRefreshKey] = useState(0);
-
-  const handleDataChanged = () => {
-    setRefreshKey((k) => k + 1);
-  };
 
   const renderActiveTab = () => {
     switch (activeTab) {
       case 'event':
-        return <EventList key={refreshKey} />;
+        return <EventList />;
       case 'pembeli':
-        return <PembeliList key={refreshKey} />;
+        return <PembeliList />;
       case 'tiket':
-        return <TiketList key={refreshKey} />;
+        return <TiketList />;
       case 'rekap':
-        return <RekapView key={refreshKey} />;
+        return <RekapView />;
       default:
-        return <EventList key={refreshKey} />;
+        return <EventList />;
     }
   };
 
   return (
     <ToastProvider>
       <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-        {/* Top Header with Instant Demo Tool */}
-        <TopNavbar onDataChanged={handleDataChanged} />
+        {/* Top Header */}
+        <TopNavbar />
 
         {/* Main Content Area (Mobile Container) */}
         <main className="container animate-fade-in" style={{ flex: 1, padding: '16px' }}>
