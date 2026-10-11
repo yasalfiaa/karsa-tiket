@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Ticket, Calendar } from 'lucide-react';
+import { Ticket } from 'lucide-react';
 
 export default function TopNavbar() {
   const [currentDate, setCurrentDate] = useState('');
@@ -69,24 +69,21 @@ export default function TopNavbar() {
           </div>
         </div>
 
-        {/* Real-Time Date Badge */}
-        <div
+        {/* Real-Time Date Text Badge (Clean without icon) */}
+        <span
           style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '6px',
             fontSize: '12px',
             fontWeight: 600,
             padding: '5px 12px',
             borderRadius: 'var(--radius-full)',
             backgroundColor: 'var(--color-primary-light)',
             color: 'var(--color-primary)',
-            border: '1px solid rgba(85, 123, 181, 0.15)'
+            border: '1px solid rgba(85, 123, 181, 0.15)',
+            letterSpacing: '0.01em'
           }}
         >
-          <Calendar size={13} strokeWidth={2.5} />
-          <span>{currentDate || 'Hari Ini'}</span>
-        </div>
+          {currentDate || 'Hari Ini'}
+        </span>
       </div>
     </header>
   );
