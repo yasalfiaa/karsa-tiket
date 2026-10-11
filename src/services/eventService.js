@@ -12,19 +12,13 @@ import {
   serverTimestamp
 } from 'firebase/firestore';
 import { db } from './firebase';
-import { isFirebaseConfigured, localDB } from './storageEngine';
 
 const COLLECTION_NAME = 'event';
 
 /**
- * Fetch list of events ordered by event date (up to 20)
+ * Fetch list of events directly from Cloud Firestore ordered by tanggal asc
  */
 export async function getEvents() {
-  if (!isFirebaseConfigured) {
-    const list = localDB.getEvents();
-    return list.sort((a, b) => (a.tanggal || '').localeCompare(b.tanggal || ''));
-  }
-
   try {
     const q = query(
       collection(db, COLLECTION_NAME),
@@ -37,13 +31,13 @@ export async function getEvents() {
       ...docSnap.data()
     }));
   } catch (error) {
-    console.error('Error fetching events from Firestore, using local fallback:', error);
-    return localDB.getEvents();
+    console.error('Error fetching events from Firestore:', error);
+    throw new Error(`Gagal memuat event dari Firestore: ${error.message}`);
   }
 }
 
 /**
- * Create a new event with initial tiket_terjual = 0
+ * Create a new event directly in Cloud Firestore
  */
 export async function createEvent({ nama, tanggal, lokasi, harga, kuota }) {
   if (!nama || !nama.trim()) {
@@ -66,43 +60,34 @@ export async function createEvent({ nama, tanggal, lokasi, harga, kuota }) {
     throw new Error('Kuota event minimal harus bernilai 1 tiket.');
   }
 
-  const newEventData = {
-    nama: nama.trim(),
-    tanggal,
-    lokasi: lokasi.trim(),
-    harga: numHarga,
-    kuota: numKuota,
-    tiket_terjual: 0
-  };
-
-  if (!isFirebaseConfigured) {
-    const current = localDB.getEvents();
-    const newId = 'evt-' + Date.now();
-    const created = { id: newId, ...newEventData, dibuat_pada: { seconds: Math.floor(Date.now() / 1000) } };
-    current.push(created);
-    localDB.saveEvents(current);
-    return created;
-  }
-
   try {
     const docRef = await addDoc(collection(db, COLLECTION_NAME), {
-      ...newEventData,
+      nama: nama.trim(),
+      tanggal,
+      lokasi: lokasi.trim(),
+      harga: numHarga,
+      kuota: numKuota,
+      tiket_terjual: 0,
       dibuat_pada: serverTimestamp()
     });
-    return { id: docRef.id, ...newEventData };
+
+    return {
+      id: docRef.id,
+      nama: nama.trim(),
+      tanggal,
+      lokasi: lokasi.trim(),
+      harga: numHarga,
+      kuota: numKuota,
+      tiket_terjual: 0
+    };
   } catch (error) {
-    console.error('Error creating event in Firestore, saving locally:', error);
-    const current = localDB.getEvents();
-    const newId = 'evt-' + Date.now();
-    const created = { id: newId, ...newEventData };
-    current.push(created);
-    localDB.saveEvents(current);
-    return created;
+    console.error('Error creating event in Firestore:', error);
+    throw new Error(`Gagal menyimpan event ke Firestore: ${error.message}`);
   }
 }
 
 /**
- * Update existing event with quota integrity validation
+ * Update existing event in Cloud Firestore
  */
 export async function updateEvent(eventId, { nama, tanggal, lokasi, harga, kuota }) {
   if (!eventId) throw new Error('ID event tidak valid.');
@@ -117,34 +102,10 @@ export async function updateEvent(eventId, { nama, tanggal, lokasi, harga, kuota
     throw new Error('Kuota event minimal harus bernilai 1 tiket.');
   }
 
-  if (!isFirebaseConfigured) {
-    const events = localDB.getEvents();
-    const idx = events.findIndex((e) => e.id === eventId);
-    if (idx === -1) throw new Error('Event tidak ditemukan.');
-
-    const current = events[idx];
-    if (numKuota < current.tiket_terjual) {
-      throw new Error(
-        `Kuota tidak boleh lebih kecil dari jumlah tiket yang sudah terjual (${current.tiket_terjual} tiket).`
-      );
-    }
-
-    events[idx] = {
-      ...current,
-      nama: nama.trim(),
-      tanggal,
-      lokasi: lokasi.trim(),
-      harga: numHarga,
-      kuota: numKuota
-    };
-    localDB.saveEvents(events);
-    return events[idx];
-  }
-
   const eventRef = doc(db, COLLECTION_NAME, eventId);
   const snap = await getDoc(eventRef);
   if (!snap.exists()) {
-    throw new Error('Event tidak ditemukan.');
+    throw new Error('Event tidak ditemukan di Firestore.');
   }
 
   const currentData = snap.data();
@@ -164,36 +125,21 @@ export async function updateEvent(eventId, { nama, tanggal, lokasi, harga, kuota
     });
     return { id: eventId, ...currentData, nama, tanggal, lokasi, harga: numHarga, kuota: numKuota };
   } catch (error) {
-    console.error('Error updating event:', error);
-    throw new Error('Gagal memperbarui data event.');
+    console.error('Error updating event in Firestore:', error);
+    throw new Error(`Gagal memperbarui data event di Firestore: ${error.message}`);
   }
 }
 
 /**
- * Delete event with Relational Integrity Protection (Prevent Delete if tiket_terjual > 0)
+ * Delete event directly from Cloud Firestore with Relational Integrity Protection
  */
 export async function deleteEvent(eventId) {
   if (!eventId) throw new Error('ID event tidak valid.');
 
-  if (!isFirebaseConfigured) {
-    const events = localDB.getEvents();
-    const target = events.find((e) => e.id === eventId);
-    if (!target) throw new Error('Event tidak ditemukan.');
-
-    if (target.tiket_terjual > 0) {
-      throw new Error(
-        `Event "${target.nama}" tidak dapat dihapus karena sudah memiliki ${target.tiket_terjual} tiket terjual.`
-      );
-    }
-
-    localDB.saveEvents(events.filter((e) => e.id !== eventId));
-    return true;
-  }
-
   const eventRef = doc(db, COLLECTION_NAME, eventId);
   const snap = await getDoc(eventRef);
   if (!snap.exists()) {
-    throw new Error('Event tidak ditemukan.');
+    throw new Error('Event tidak ditemukan di Firestore.');
   }
 
   const data = snap.data();
@@ -207,7 +153,7 @@ export async function deleteEvent(eventId) {
     await deleteDoc(eventRef);
     return true;
   } catch (error) {
-    console.error('Error deleting event:', error);
-    throw new Error('Gagal menghapus event.');
+    console.error('Error deleting event in Firestore:', error);
+    throw new Error(`Gagal menghapus event di Firestore: ${error.message}`);
   }
 }
