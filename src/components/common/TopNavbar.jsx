@@ -1,7 +1,18 @@
-import React from 'react';
-import { Ticket } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Ticket, Calendar } from 'lucide-react';
 
 export default function TopNavbar() {
+  const [currentDate, setCurrentDate] = useState('');
+
+  useEffect(() => {
+    const today = new Intl.DateTimeFormat('id-ID', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric'
+    }).format(new Date());
+    setCurrentDate(today);
+  }, []);
+
   return (
     <header
       style={{
@@ -58,19 +69,24 @@ export default function TopNavbar() {
           </div>
         </div>
 
-        {/* Clean Bootcamp Tag */}
-        <span
+        {/* Real-Time Date Badge */}
+        <div
           style={{
-            fontSize: '11px',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px',
+            fontSize: '12px',
             fontWeight: 600,
-            padding: '4px 10px',
+            padding: '5px 12px',
             borderRadius: 'var(--radius-full)',
             backgroundColor: 'var(--color-primary-light)',
-            color: 'var(--color-primary)'
+            color: 'var(--color-primary)',
+            border: '1px solid rgba(85, 123, 181, 0.15)'
           }}
         >
-          Sesi 3 Bootcamp
-        </span>
+          <Calendar size={13} strokeWidth={2.5} />
+          <span>{currentDate || 'Hari Ini'}</span>
+        </div>
       </div>
     </header>
   );
