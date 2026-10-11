@@ -14,6 +14,7 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { normalizeWhatsApp, isValidEmail } from '../utils/formatter';
+import { isFirebaseConfigured, localDB } from './storageEngine';
 
 const COLLECTION_NAME = 'pembeli';
 
@@ -21,6 +22,11 @@ const COLLECTION_NAME = 'pembeli';
  * Fetch list of buyers ordered by name (up to 20)
  */
 export async function getPembeliList() {
+  if (!isFirebaseConfigured) {
+    const list = localDB.getPembeli();
+    return list.sort((a, b) => (a.nama || '').localeCompare(b.nama || ''));
+  }
+
   try {
     const q = query(
       collection(db, COLLECTION_NAME),
@@ -33,8 +39,8 @@ export async function getPembeliList() {
       ...docSnap.data()
     }));
   } catch (error) {
-    console.error('Error fetching pembeli:', error);
-    throw new Error('Gagal memuat data pembeli. Periksa koneksi Anda.');
+    console.error('Error fetching pembeli from Firestore, using local fallback:', error);
+    return localDB.getPembeli();
   }
 }
 
@@ -55,26 +61,43 @@ export async function createPembeli({ nama, noWhatsapp, email }) {
     throw new Error('Format email tidak valid (harus menyertakan tanda @).');
   }
 
+  const buyerData = {
+    id: normalizedWA,
+    nama: nama.trim(),
+    noWhatsapp: normalizedWA,
+    email: email.trim().toLowerCase(),
+    dibuat_pada: { seconds: Math.floor(Date.now() / 1000) }
+  };
+
+  if (!isFirebaseConfigured) {
+    const list = localDB.getPembeli();
+    if (list.some((p) => p.noWhatsapp === normalizedWA)) {
+      throw new Error('Nomor WhatsApp sudah terdaftar.');
+    }
+    list.push(buyerData);
+    localDB.savePembeli(list);
+    return buyerData;
+  }
+
   const pembeliRef = doc(db, COLLECTION_NAME, normalizedWA);
   const snap = await getDoc(pembeliRef);
 
-  // Acceptance Criteria 2: Jika nomor WA sudah terdaftar, data lama tidak tertimpa
   if (snap.exists()) {
     throw new Error('Nomor WhatsApp sudah terdaftar.');
   }
 
   try {
-    const data = {
-      nama: nama.trim(),
-      noWhatsapp: normalizedWA,
-      email: email.trim().toLowerCase(),
+    await setDoc(pembeliRef, {
+      ...buyerData,
       dibuat_pada: serverTimestamp()
-    };
-    await setDoc(pembeliRef, data);
-    return { id: normalizedWA, ...data };
+    });
+    return buyerData;
   } catch (error) {
-    console.error('Error creating pembeli:', error);
-    throw new Error('Gagal menyimpan data pembeli baru.');
+    console.error('Error creating pembeli in Firestore, saving locally:', error);
+    const list = localDB.getPembeli();
+    list.push(buyerData);
+    localDB.savePembeli(list);
+    return buyerData;
   }
 }
 
@@ -89,6 +112,20 @@ export async function updatePembeli(noWhatsapp, { nama, email }) {
   }
   if (!email || !isValidEmail(email)) {
     throw new Error('Format email tidak valid (harus menyertakan tanda @).');
+  }
+
+  if (!isFirebaseConfigured) {
+    const list = localDB.getPembeli();
+    const idx = list.findIndex((p) => p.noWhatsapp === noWhatsapp);
+    if (idx === -1) throw new Error('Data pembeli tidak ditemukan.');
+
+    list[idx] = {
+      ...list[idx],
+      nama: nama.trim(),
+      email: email.trim().toLowerCase()
+    };
+    localDB.savePembeli(list);
+    return list[idx];
   }
 
   const pembeliRef = doc(db, COLLECTION_NAME, noWhatsapp);
@@ -115,7 +152,20 @@ export async function updatePembeli(noWhatsapp, { nama, email }) {
 export async function deletePembeli(noWhatsapp) {
   if (!noWhatsapp) throw new Error('Nomor WhatsApp tidak valid.');
 
-  // Check if buyer has any tickets
+  if (!isFirebaseConfigured) {
+    const tickets = localDB.getTiket();
+    const active = tickets.filter(
+      (t) => t.pembeli_id === noWhatsapp && (t.status === 'menunggu_bayar' || t.status === 'lunas' || t.status === 'hadir')
+    );
+    if (active.length > 0) {
+      throw new Error(`Pembeli tidak dapat dihapus karena masih memiliki ${active.length} tiket aktif.`);
+    }
+
+    const list = localDB.getPembeli().filter((p) => p.noWhatsapp !== noWhatsapp);
+    localDB.savePembeli(list);
+    return true;
+  }
+
   const tiketQuery = query(
     collection(db, 'tiket'),
     where('pembeli_id', '==', noWhatsapp)

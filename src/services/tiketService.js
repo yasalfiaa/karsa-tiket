@@ -12,6 +12,7 @@ import {
   serverTimestamp
 } from 'firebase/firestore';
 import { db } from './firebase';
+import { isFirebaseConfigured, localDB } from './storageEngine';
 
 const COLLECTION_NAME = 'tiket';
 
@@ -19,6 +20,14 @@ const COLLECTION_NAME = 'tiket';
  * Fetch tickets with optional status filtering
  */
 export async function getTiketList(statusFilter = 'semua') {
+  if (!isFirebaseConfigured) {
+    let tickets = localDB.getTiket();
+    if (statusFilter && statusFilter !== 'semua') {
+      tickets = tickets.filter((t) => t.status === statusFilter);
+    }
+    return tickets.sort((a, b) => (b.dibuat_pada?.seconds || 0) - (a.dibuat_pada?.seconds || 0));
+  }
+
   try {
     let q;
     if (statusFilter && statusFilter !== 'semua') {
@@ -41,7 +50,6 @@ export async function getTiketList(statusFilter = 'semua') {
       ...docSnap.data()
     }));
 
-    // In-memory sort by date desc if filtered by where
     if (statusFilter && statusFilter !== 'semua') {
       results.sort((a, b) => {
         const timeA = a.dibuat_pada?.seconds || 0;
@@ -52,8 +60,12 @@ export async function getTiketList(statusFilter = 'semua') {
 
     return results;
   } catch (error) {
-    console.error('Error fetching tiket:', error);
-    throw new Error('Gagal memuat daftar tiket.');
+    console.error('Error fetching tiket from Firestore, using local fallback:', error);
+    let tickets = localDB.getTiket();
+    if (statusFilter && statusFilter !== 'semua') {
+      tickets = tickets.filter((t) => t.status === statusFilter);
+    }
+    return tickets;
   }
 }
 
@@ -65,9 +77,49 @@ export async function createTiketTransaction({ event_id, pembeli_id, jumlah }) {
   if (!pembeli_id) throw new Error('Pilih pembeli terlebih dahulu.');
 
   const numJumlah = Number(jumlah);
-  // Acceptance Criteria 2: Jumlah tiket 1 sampai 5
   if (isNaN(numJumlah) || numJumlah < 1 || numJumlah > 5 || !Number.isInteger(numJumlah)) {
     throw new Error('Jumlah tiket harus berupa bilangan bulat antara 1 sampai 5.');
+  }
+
+  if (!isFirebaseConfigured) {
+    const events = localDB.getEvents();
+    const pembeliList = localDB.getPembeli();
+    const tickets = localDB.getTiket();
+
+    const eventIdx = events.findIndex((e) => e.id === event_id);
+    if (eventIdx === -1) throw new Error('Event yang dipilih tidak ditemukan.');
+
+    const pembeli = pembeliList.find((p) => p.noWhatsapp === pembeli_id);
+    if (!pembeli) throw new Error('Pembeli yang dipilih tidak ditemukan.');
+
+    const eventData = events[eventIdx];
+    const sisaKuota = eventData.kuota - eventData.tiket_terjual;
+    if (numJumlah > sisaKuota) {
+      throw new Error(`Sisa kuota tidak mencukupi (tersisa ${Math.max(0, sisaKuota)} tiket).`);
+    }
+
+    const totalHarga = eventData.harga * numJumlah;
+    const newTiket = {
+      id: 'tkt-' + Date.now(),
+      event_id,
+      event_nama: eventData.nama,
+      pembeli_id,
+      pembeli_nama: pembeli.nama,
+      jumlah: numJumlah,
+      harga_satuan: eventData.harga,
+      total_harga: totalHarga,
+      status: 'menunggu_bayar',
+      dibuat_pada: { seconds: Math.floor(Date.now() / 1000) }
+    };
+
+    // Update event quota atomically in memory
+    events[eventIdx].tiket_terjual += numJumlah;
+    tickets.unshift(newTiket);
+
+    localDB.saveEvents(events);
+    localDB.saveTiket(tickets);
+
+    return newTiket;
   }
 
   const eventRef = doc(db, 'event', event_id);
@@ -90,7 +142,6 @@ export async function createTiketTransaction({ event_id, pembeli_id, jumlah }) {
       const pembeliData = pembeliSnap.data();
 
       const sisaKuota = eventData.kuota - eventData.tiket_terjual;
-      // Acceptance Criteria 2: Jumlah tidak boleh melebihi sisa kuota
       if (numJumlah > sisaKuota) {
         throw new Error(`Sisa kuota tidak mencukupi (tersisa ${Math.max(0, sisaKuota)} tiket).`);
       }
@@ -109,7 +160,6 @@ export async function createTiketTransaction({ event_id, pembeli_id, jumlah }) {
         dibuat_pada: serverTimestamp()
       };
 
-      // Atomic write: insert tiket & update event.tiket_terjual
       transaction.set(newTiketRef, tiketData);
       transaction.update(eventRef, {
         tiket_terjual: eventData.tiket_terjual + numJumlah
@@ -134,6 +184,58 @@ export async function createTiketTransaction({ event_id, pembeli_id, jumlah }) {
 export async function updateTiketStatus(tiketId, newStatus) {
   if (!tiketId) throw new Error('ID tiket tidak valid.');
 
+  if (!isFirebaseConfigured) {
+    const tickets = localDB.getTiket();
+    const events = localDB.getEvents();
+
+    const tIdx = tickets.findIndex((t) => t.id === tiketId);
+    if (tIdx === -1) throw new Error('Tiket tidak ditemukan.');
+
+    const currentTiket = tickets[tIdx];
+    const currentStatus = currentTiket.status;
+
+    if (currentStatus === 'hadir' || currentStatus === 'dibatalkan') {
+      throw new Error(`Tiket dengan status "${currentStatus}" bersifat final dan tidak dapat diubah lagi.`);
+    }
+
+    if (currentStatus === 'menunggu_bayar') {
+      if (newStatus === 'hadir') {
+        throw new Error('Tiket menunggu bayar tidak dapat langsung check-in (harus berstatus lunas terlebih dahulu).');
+      }
+
+      if (newStatus === 'lunas') {
+        tickets[tIdx].status = 'lunas';
+        localDB.saveTiket(tickets);
+        return tickets[tIdx];
+      }
+
+      if (newStatus === 'dibatalkan') {
+        // Return quota
+        const eIdx = events.findIndex((e) => e.id === currentTiket.event_id);
+        if (eIdx !== -1) {
+          events[eIdx].tiket_terjual = Math.max(0, events[eIdx].tiket_terjual - currentTiket.jumlah);
+          localDB.saveEvents(events);
+        }
+        tickets[tIdx].status = 'dibatalkan';
+        localDB.saveTiket(tickets);
+        return tickets[tIdx];
+      }
+    }
+
+    if (currentStatus === 'lunas') {
+      if (newStatus === 'dibatalkan') {
+        throw new Error('Tiket yang sudah berstatus lunas tidak dapat dibatalkan.');
+      }
+      if (newStatus === 'hadir') {
+        tickets[tIdx].status = 'hadir';
+        localDB.saveTiket(tickets);
+        return tickets[tIdx];
+      }
+    }
+
+    throw new Error(`Perubahan status dari "${currentStatus}" ke "${newStatus}" tidak sah.`);
+  }
+
   const tiketRef = doc(db, COLLECTION_NAME, tiketId);
   const snap = await getDoc(tiketRef);
   if (!snap.exists()) {
@@ -143,12 +245,10 @@ export async function updateTiketStatus(tiketId, newStatus) {
   const currentTiket = snap.data();
   const currentStatus = currentTiket.status;
 
-  // Strict State Machine Rules
   if (currentStatus === 'hadir' || currentStatus === 'dibatalkan') {
     throw new Error(`Tiket dengan status "${currentStatus}" bersifat final dan tidak dapat diubah lagi.`);
   }
 
-  // Acceptance Criteria 3: menunggu_bayar hanya boleh ke lunas atau dibatalkan
   if (currentStatus === 'menunggu_bayar') {
     if (newStatus === 'hadir') {
       throw new Error('Tiket menunggu bayar tidak dapat langsung check-in (harus berstatus lunas terlebih dahulu).');
@@ -160,7 +260,6 @@ export async function updateTiketStatus(tiketId, newStatus) {
     }
 
     if (newStatus === 'dibatalkan') {
-      // Acceptance Criteria 4: Dibatalkan mengembalikan kuota ke event via runTransaction
       const eventRef = doc(db, 'event', currentTiket.event_id);
       await runTransaction(db, async (transaction) => {
         const eventSnap = await transaction.get(eventRef);

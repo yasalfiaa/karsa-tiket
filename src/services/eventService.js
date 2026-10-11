@@ -12,6 +12,7 @@ import {
   serverTimestamp
 } from 'firebase/firestore';
 import { db } from './firebase';
+import { isFirebaseConfigured, localDB } from './storageEngine';
 
 const COLLECTION_NAME = 'event';
 
@@ -19,6 +20,11 @@ const COLLECTION_NAME = 'event';
  * Fetch list of events ordered by event date (up to 20)
  */
 export async function getEvents() {
+  if (!isFirebaseConfigured) {
+    const list = localDB.getEvents();
+    return list.sort((a, b) => (a.tanggal || '').localeCompare(b.tanggal || ''));
+  }
+
   try {
     const q = query(
       collection(db, COLLECTION_NAME),
@@ -31,8 +37,8 @@ export async function getEvents() {
       ...docSnap.data()
     }));
   } catch (error) {
-    console.error('Error fetching events:', error);
-    throw new Error('Gagal memuat daftar event. Periksa koneksi internet Anda.');
+    console.error('Error fetching events from Firestore, using local fallback:', error);
+    return localDB.getEvents();
   }
 }
 
@@ -40,7 +46,6 @@ export async function getEvents() {
  * Create a new event with initial tiket_terjual = 0
  */
 export async function createEvent({ nama, tanggal, lokasi, harga, kuota }) {
-  // Validations
   if (!nama || !nama.trim()) {
     throw new Error('Nama event wajib diisi.');
   }
@@ -61,29 +66,38 @@ export async function createEvent({ nama, tanggal, lokasi, harga, kuota }) {
     throw new Error('Kuota event minimal harus bernilai 1 tiket.');
   }
 
+  const newEventData = {
+    nama: nama.trim(),
+    tanggal,
+    lokasi: lokasi.trim(),
+    harga: numHarga,
+    kuota: numKuota,
+    tiket_terjual: 0
+  };
+
+  if (!isFirebaseConfigured) {
+    const current = localDB.getEvents();
+    const newId = 'evt-' + Date.now();
+    const created = { id: newId, ...newEventData, dibuat_pada: { seconds: Math.floor(Date.now() / 1000) } };
+    current.push(created);
+    localDB.saveEvents(current);
+    return created;
+  }
+
   try {
     const docRef = await addDoc(collection(db, COLLECTION_NAME), {
-      nama: nama.trim(),
-      tanggal,
-      lokasi: lokasi.trim(),
-      harga: numHarga,
-      kuota: numKuota,
-      tiket_terjual: 0,
+      ...newEventData,
       dibuat_pada: serverTimestamp()
     });
-
-    return {
-      id: docRef.id,
-      nama: nama.trim(),
-      tanggal,
-      lokasi: lokasi.trim(),
-      harga: numHarga,
-      kuota: numKuota,
-      tiket_terjual: 0
-    };
+    return { id: docRef.id, ...newEventData };
   } catch (error) {
-    console.error('Error creating event:', error);
-    throw new Error('Gagal menyimpan event baru. Coba lagi.');
+    console.error('Error creating event in Firestore, saving locally:', error);
+    const current = localDB.getEvents();
+    const newId = 'evt-' + Date.now();
+    const created = { id: newId, ...newEventData };
+    current.push(created);
+    localDB.saveEvents(current);
+    return created;
   }
 }
 
@@ -93,13 +107,6 @@ export async function createEvent({ nama, tanggal, lokasi, harga, kuota }) {
 export async function updateEvent(eventId, { nama, tanggal, lokasi, harga, kuota }) {
   if (!eventId) throw new Error('ID event tidak valid.');
 
-  const eventRef = doc(db, COLLECTION_NAME, eventId);
-  const snap = await getDoc(eventRef);
-  if (!snap.exists()) {
-    throw new Error('Event tidak ditemukan.');
-  }
-
-  const currentData = snap.data();
   const numHarga = Number(harga);
   const numKuota = Number(kuota);
 
@@ -110,7 +117,37 @@ export async function updateEvent(eventId, { nama, tanggal, lokasi, harga, kuota
     throw new Error('Kuota event minimal harus bernilai 1 tiket.');
   }
 
-  // Acceptance Criteria 4: Kuota tidak boleh lebih kecil dari tiket terjual
+  if (!isFirebaseConfigured) {
+    const events = localDB.getEvents();
+    const idx = events.findIndex((e) => e.id === eventId);
+    if (idx === -1) throw new Error('Event tidak ditemukan.');
+
+    const current = events[idx];
+    if (numKuota < current.tiket_terjual) {
+      throw new Error(
+        `Kuota tidak boleh lebih kecil dari jumlah tiket yang sudah terjual (${current.tiket_terjual} tiket).`
+      );
+    }
+
+    events[idx] = {
+      ...current,
+      nama: nama.trim(),
+      tanggal,
+      lokasi: lokasi.trim(),
+      harga: numHarga,
+      kuota: numKuota
+    };
+    localDB.saveEvents(events);
+    return events[idx];
+  }
+
+  const eventRef = doc(db, COLLECTION_NAME, eventId);
+  const snap = await getDoc(eventRef);
+  if (!snap.exists()) {
+    throw new Error('Event tidak ditemukan.');
+  }
+
+  const currentData = snap.data();
   if (numKuota < currentData.tiket_terjual) {
     throw new Error(
       `Kuota tidak boleh lebih kecil dari jumlah tiket yang sudah terjual (${currentData.tiket_terjual} tiket).`
@@ -137,6 +174,21 @@ export async function updateEvent(eventId, { nama, tanggal, lokasi, harga, kuota
  */
 export async function deleteEvent(eventId) {
   if (!eventId) throw new Error('ID event tidak valid.');
+
+  if (!isFirebaseConfigured) {
+    const events = localDB.getEvents();
+    const target = events.find((e) => e.id === eventId);
+    if (!target) throw new Error('Event tidak ditemukan.');
+
+    if (target.tiket_terjual > 0) {
+      throw new Error(
+        `Event "${target.nama}" tidak dapat dihapus karena sudah memiliki ${target.tiket_terjual} tiket terjual.`
+      );
+    }
+
+    localDB.saveEvents(events.filter((e) => e.id !== eventId));
+    return true;
+  }
 
   const eventRef = doc(db, COLLECTION_NAME, eventId);
   const snap = await getDoc(eventRef);
